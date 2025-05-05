@@ -10,6 +10,9 @@ import gc  # For garbage collection
 
 from api import Request, RequestOperation, Response, ResponseType
 from csm_generator import Generator
+from cerebras_client import CerebrasClient
+
+cerebras_client = None
 
 def check_cuda_availability():
     """Check CUDA availability and report details"""
@@ -158,10 +161,13 @@ async def echo(websocket):
                     try:
                         # First record the user's input with speaker_id=1
                         record_user_input(request.contextId, request.text)
+
+                        # Get response from Cerebras
+                        llm_response = await cerebras_client.get_response(request.text, request.contextId)
                         
                         # Then generate AI response with speaker_id=0
                         audio = audioGenerator.generate(
-                            text="",  # Empty text because we're using the EOS to trigger generation
+                            text=llm_response,
                             speaker_id=0,  # AI is always speaker 0
                             context_id=request.contextId,
                             sample_rate=16000,
@@ -199,6 +205,8 @@ async def echo(websocket):
                     
             elif request.operation == RequestOperation.CLEAR:
                 print(f"Clearing context for {request.contextId}")
+                # Clear both CSM and Cerebras contexts
+                cerebras_client.clear_context(request.contextId)
                 # Acknowledge the clear operation
                 response = Response(
                     type=ResponseType.ACK,
@@ -228,9 +236,12 @@ async def echo(websocket):
                     try:
                         # First record the user's input with speaker_id=1
                         record_user_input(request.contextId, request.text)
+
+                        # Get response from Cerebras
+                        llm_response = await cerebras_client.get_response(request.text, request.contextId)
                         
                         audio = audioGenerator.generate(
-                            text=request.text,  # Just pass the input text directly
+                            text=llm_response,
                             speaker_id=0,  # AI is always speaker 0 
                             context_id=request.contextId,
                             sample_rate=16000
@@ -315,6 +326,16 @@ async def main():
     try:
         # Initialize generator with the selected device
         audioGenerator = Generator(device=device)
+
+        # Initialize Cerebras client
+        api_key = os.getenv("CEREBRAS_API_KEY")
+        if not api_key:
+            raise ValueError("CEREBRAS_API_KEY environment variable not set")
+        
+        global cerebras_client
+        cerebras_client = CerebrasClient(api_key=api_key)
+        print("Initialized Cerebras client")
+
 
         # get port from environment variable
         port = int(os.getenv("PORT", 8765))
